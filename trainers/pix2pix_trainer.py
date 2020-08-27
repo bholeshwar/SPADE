@@ -5,7 +5,7 @@ Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses
 
 from models.networks.sync_batchnorm import DataParallelWithCallback
 from models.pix2pix_model import Pix2PixModel
-
+from apex import amp
 
 class Pix2PixTrainer():
     """
@@ -30,11 +30,14 @@ class Pix2PixTrainer():
                 self.pix2pix_model_on_one_gpu.create_optimizers(opt)
             self.old_lr = opt.lr
 
+            [self.pix2pix_model_on_one_gpu.netE, self.pix2pix_model_on_one_gpu.netG, self.pix2pix_model_on_one_gpu.netD], [self.optimizer_G, self.optimizer_D] = amp.initialize([self.pix2pix_model_on_one_gpu.netE, self.pix2pix_model_on_one_gpu.netG, self.pix2pix_model_on_one_gpu.netD], [self.optimizer_G, self.optimizer_D], opt_level = "O1", num_losses = 2)
+
     def run_generator_one_step(self, data):
         self.optimizer_G.zero_grad()
         g_losses, generated = self.pix2pix_model(data, mode='generator')
         g_loss = sum(g_losses.values()).mean()
-        g_loss.backward()
+        with amp.scale_loss(g_loss, [self.optimizer_G], loss_id=0) as scaled_loss:
+          scaled_loss.backward()
         self.optimizer_G.step()
         self.g_losses = g_losses
         self.generated = generated
@@ -43,7 +46,8 @@ class Pix2PixTrainer():
         self.optimizer_D.zero_grad()
         d_losses = self.pix2pix_model(data, mode='discriminator')
         d_loss = sum(d_losses.values()).mean()
-        d_loss.backward()
+        with amp.scale_loss(d_loss, [self.optimizer_D], loss_id=1) as scaled_loss:
+          scaled_loss.backward()
         self.optimizer_D.step()
         self.d_losses = d_losses
 
@@ -84,3 +88,4 @@ class Pix2PixTrainer():
                 param_group['lr'] = new_lr_G
             print('update learning rate: %f -> %f' % (self.old_lr, new_lr))
             self.old_lr = new_lr
+
